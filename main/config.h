@@ -30,6 +30,18 @@
 // Runtime-togglable with the 'x' console command while debugging.
 #define MIC_SLOT_DEFAULT  0
 
+// ------------------------------------------------------------- bring-up ----
+// Beep at boot. This proves the amp, its supply, the I2S TX path and the
+// speaker all work, without involving the microphone or the console - so when
+// something is silent it tells you which half of the board to look at.
+// Set to 0 once the mask works; 'T' on the console toggles a held tone.
+#ifndef TEST_TONE_ON_BOOT               // -DTEST_TONE_ON_BOOT=0 also works
+#define TEST_TONE_ON_BOOT 1
+#endif
+#define TEST_TONE_HZ      440.0f
+#define TEST_TONE_MS      2000
+#define TEST_TONE_LEVEL   0.25f
+
 // -------------------------------------------------------------- battery ----
 #ifndef BATTERY_MONITOR                 // -DBATTERY_MONITOR=0 also works
 #define BATTERY_MONITOR   1             // 0 if you did not fit the divider

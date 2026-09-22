@@ -84,6 +84,11 @@ static dsp::Limiter s_limiter;
 
 static float s_driveComp = 1.0f;
 
+// Bring-up test tone: bypasses the whole chain and the mic entirely.
+static dsp::RingMod s_toneOsc;
+static volatile int s_toneFrames = 0;    // counts down, 0 = off
+static volatile bool s_toneHold = false; // console-latched, runs until cleared
+
 // ----------------------------------------------------------- parameters ----
 
 static void applyParams(const Params& p) {
@@ -174,6 +179,24 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
     const bool useReverb = p.reverbMix > 0.001f;
 
     float peakIn = 0.0f, peakOut = 0.0f;
+
+    // Test tone wins over everything: if this is silent, the fault is in the
+    // amp, its supply or the speaker, not in the mic or the DSP.
+    if (s_toneHold || s_toneFrames > 0) {
+        for (int i = 0; i < frames; ++i) {
+            const float y = TEST_TONE_LEVEL * s_toneOsc.next();
+            const float mag = fabsf(y);
+            if (mag > peakOut) peakOut = mag;
+            const int32_t o = static_cast<int32_t>(y * 8388607.0f) << 8;
+            out[2 * i] = o;
+            out[2 * i + 1] = o;
+        }
+        if (s_toneFrames > 0) {
+            s_toneFrames = (s_toneFrames > frames) ? s_toneFrames - frames : 0;
+        }
+        s_peakOut = peakOut;
+        return;
+    }
 
     for (int i = 0; i < frames; ++i) {
         // The ICS-43434 sends 24 bits MSB-first, left-justified in the slot.
@@ -350,6 +373,7 @@ static void printHelp() {
     printf("  c <hz>   tone lowpass         g <x>   input gain\n");
     printf("  o <0-1>  output gain          t <x>   gate threshold\n");
     printf("  b        read the battery sense pin\n");
+    printf("  T        test tone on/off (bypasses mic and DSP)\n");
     for (int i = 0; i < kPresetCount; ++i) {
         printf("  [%d] %s\n", i, kPresets[i].name);
     }
@@ -398,6 +422,12 @@ static void handleLine(char* line) {
             return;
         case 'l':
             s_meter = !s_meter;
+            return;
+        case 'T':
+            s_toneHold = !s_toneHold;
+            s_toneFrames = 0;
+            printf("test tone %s (%.0f Hz, bypasses mic and DSP)\n",
+                   s_toneHold ? "ON" : "off", TEST_TONE_HZ);
             return;
         case 'b':
 #if BATTERY_MONITOR
@@ -454,8 +484,12 @@ static void consoleInit() {
     uc.stop_bits = UART_STOP_BITS_1;
     uc.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
     uc.source_clk = UART_SCLK_DEFAULT;
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, 256, 0, 0, nullptr, 0));
+    // Order matters: configure the port, then install the driver. Installing
+    // first and reconfiguring afterwards leaves RX dead - keypresses never
+    // reach uart_read_bytes even though TX keeps printing happily.
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uc));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, 256, 0, 0, nullptr, 0));
+    uart_flush_input(UART_NUM_0);
 }
 
 static void pollConsole() {
@@ -619,6 +653,15 @@ extern "C" void app_main(void) {
 
     vTaskDelay(pdMS_TO_TICKS(120));     // let the DMA prime, avoids a pop
     gpio_set_level(PIN_AMP_SD, 1);
+    ESP_LOGI(TAG, "amp enabled (SD_MODE high on GPIO%d)", PIN_AMP_SD);
+
+    s_toneOsc.setFreq(TEST_TONE_HZ, SAMPLE_RATE);
+#if TEST_TONE_ON_BOOT
+    s_toneFrames = SAMPLE_RATE * TEST_TONE_MS / 1000;
+    ESP_LOGI(TAG, "playing %.0f Hz test tone for %d ms - if you hear nothing, the "
+                  "fault is the amp, its supply or the speaker, not the mic",
+             TEST_TONE_HZ, TEST_TONE_MS);
+#endif
 
     ESP_LOGI(TAG, "running at %d Hz, %d-frame blocks (%.1f ms)", SAMPLE_RATE,
              AUDIO_BLOCK, 1000.0f * AUDIO_BLOCK / SAMPLE_RATE);

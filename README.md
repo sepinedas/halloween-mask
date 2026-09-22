@@ -196,10 +196,29 @@ below full scale. All pass. The firmware also reports its own CPU load — press
 
 ---
 
+## Bring-up order
+
+The firmware beeps a 440 Hz tone for 2 s at boot (`TEST_TONE_ON_BOOT` in
+`main/config.h`, `T` on the console to toggle a held tone). That tone bypasses the
+microphone and the whole DSP chain, so it splits the board cleanly in half:
+
+1. **Do you hear the boot beep?**
+   - *No* → the fault is the amp, its supply or the speaker. Nothing to do with the
+     mic. Check 3.3 V at the amp's Vin, check GPIO21 is high (~3.3 V) after boot, and
+     check the speaker: the MAX98357A output is **bridge-tied**, so the speaker floats
+     across `+` and `−`. Grounding either terminal gives you silence.
+   - *Yes* → the entire output path works. Move on.
+2. **Press `4`** (clean preset) **and `l`** (level meter), then talk.
+   - `in` stays `0.0000` → press `x` to read the other I2S slot, and check the mic's
+     L/R pin is grounded.
+   - `in` moves → press `0` for the demon voice.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
+| No boot beep at all | Amp unpowered, SD_MODE low, or a speaker terminal shorted to GND (the output is bridge-tied — the speaker must float) |
+| Console prints but ignores keypresses | Fixed: `uart_param_config` must run *before* `uart_driver_install`, or RX stays dead |
 | Silence, `in` level is 0.000 (`l`) | Mic in the other I2S slot — press `x`, or check L/R is grounded |
 | Silence, `in` moves but `out` is 0 | Muted, or SD_MODE not pulled high |
 | Hiss but no voice | Gate threshold too high: `t 0.002` |
