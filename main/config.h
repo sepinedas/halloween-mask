@@ -42,6 +42,10 @@
 #define TEST_TONE_MS      2000
 #define TEST_TONE_LEVEL   0.25f
 
+// Print input/output levels once a second for this long after boot, so the
+// mask can be brought up on a monitor that only shows output. 0 disables.
+#define STARTUP_METER_SEC 20
+
 // -------------------------------------------------------------- battery ----
 #ifndef BATTERY_MONITOR                 // -DBATTERY_MONITOR=0 also works
 #define BATTERY_MONITOR   1             // 0 if you did not fit the divider

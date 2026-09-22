@@ -522,6 +522,7 @@ static void uiTask(void*) {
     int64_t pressedAt = 0;
     bool longFired = false;
     int ledPhase = 0;
+    int64_t lastMeter = 0;
     bool lowBattery = false;
 #if BATTERY_MONITOR
     int64_t lastBattery = 0;
@@ -600,8 +601,14 @@ static void uiTask(void*) {
         }
         gpio_set_level(PIN_LED, level);
 
-        if (s_meter && (ledPhase % 20) == 0) {
-            printf("in %.4f  out %.4f  cpu %.1f%%\n", s_peakIn, s_peakOut, s_cpuLoad);
+        // Levels once a second, automatically for the first STARTUP_METER_SEC
+        // so a board whose console RX is not working can still be diagnosed.
+        const bool startupMeter = now < static_cast<int64_t>(STARTUP_METER_SEC) * 1000000;
+        if ((s_meter || startupMeter) && (now - lastMeter) > 1000000) {
+            lastMeter = now;
+            printf("in %.4f  out %.4f  cpu %.1f%%  preset %d (%s)%s\n", s_peakIn, s_peakOut,
+                   s_cpuLoad, s_preset, kPresets[s_preset].name,
+                   s_toneHold || s_toneFrames > 0 ? "  TEST TONE" : "");
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));

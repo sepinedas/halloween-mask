@@ -1,6 +1,12 @@
 # Target
 CONFIG_IDF_TARGET="esp32"
 
+# Most WROOM-32 modules carry 4 MB. The IDF default of 2 MB makes the
+# bootloader print "detected size (4096k) larger than the size in the binary
+# image header (2048k)" and then use only 2 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
 # Run flat out - the audio task needs the headroom
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
