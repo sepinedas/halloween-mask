@@ -50,6 +50,7 @@ struct Params {
     float inGain = 14.0f;     // ICS-43434 speech sits around -30 dBFS
     float outGain = 0.9f;
     float gateThr = 0.014f;   // post-gain, so it tracks inGain
+    float bodyDb = 0.0f;      // broad lift near 600 Hz, counters a thin upshift
     bool muted = false;
 };
 
@@ -86,6 +87,8 @@ static dsp::Biquad s_hp;
 static dsp::Biquad s_lp;
 static dsp::SteepLowpass s_aa;  // input anti-alias, only when pitching up
 static bool s_useAA = false;
+static dsp::Biquad s_body;      // formant-ish body lift, see the Woman preset
+static bool s_useBody = false;
 #if SPEAKER_HP_HZ > 0
 static dsp::Biquad s_outHp;     // keeps sub-bass out of the limiter
 #endif
@@ -112,6 +115,13 @@ static void applyParams(const Params& p) {
     s_lp.lowpass(p.lpHz, 0.707f, SAMPLE_RATE);
     s_ring.setFreq(p.ringHz, SAMPLE_RATE);
     s_gate.setThreshold(p.gateThr);
+
+    // Shifting up thins the voice out, because the whole spectral envelope
+    // rises with the pitch. A broad lift low down puts some of it back.
+    s_useBody = fabsf(p.bodyDb) > 0.1f;
+    if (s_useBody) {
+        s_body.peaking(600.0f, 0.8f, p.bodyDb, SAMPLE_RATE);
+    }
 
     // Pitching up reads the delay line faster than it is written, so input
     // content above Nyquist/ratio folds back as aliasing - audible as harsh,
@@ -142,6 +152,7 @@ static void loadPreset(int idx) {
     s_pending.reverbMix = pr.reverbMix;
     s_pending.lpHz = pr.lpHz;
     s_pending.outGain = pr.outGain;
+    s_pending.bodyDb = pr.bodyDb;
     s_pendingDirty = true;
     xSemaphoreGive(s_paramLock);
     s_preset = idx;
@@ -264,6 +275,7 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
         // loud and let the limiter be the thing that catches peaks.
         y = dsp::softClip(y * p.drive);
         y = s_lp.process(y);
+        if (s_useBody) y = s_body.process(y);
 
         if (useReverb) {
             y += s_reverb.process(y) * p.reverbMix;
@@ -431,8 +443,8 @@ static void printStats() {
     printf("preset %d (%s)  cpu %.1f%%  in %.3f  out %.3f  slot %s  %s\n",
            s_preset, kPresets[s_preset].name, s_cpuLoad, s_peakIn, s_peakOut,
            s_micSlot == 0 ? "L" : "R", p.muted ? "MUTED" : "live");
-    printf("  pitch %.1f/%.1f st  mix2 %.2f  dry %.2f  drive %.1f\n",
-           p.pitch1, p.pitch2, p.mix2, p.dryMix, p.drive);
+    printf("  pitch %.1f/%.1f st  mix2 %.2f  dry %.2f  drive %.1f  body %+.1f dB\n",
+           p.pitch1, p.pitch2, p.mix2, p.dryMix, p.drive, p.bodyDb);
     printf("  ring %.0f Hz x%.2f  reverb %.2f  lp %.0f Hz  in x%.1f  out %.2f  gate %.4f\n",
            p.ringHz, p.ringMix, p.reverbMix, p.lpHz, p.inGain, p.outGain, p.gateThr);
 #if BATTERY_MONITOR
@@ -514,6 +526,7 @@ static void handleLine(char* line) {
         case 'g': editParams([val](Params& p) { p.inGain = dsp::clampf(val, 0.1f, 64.0f); }); break;
         case 'o': editParams([val](Params& p) { p.outGain = dsp::clampf(val, 0.0f, 1.0f); }); break;
         case 't': editParams([val](Params& p) { p.gateThr = dsp::clampf(val, 0.0f, 0.5f); }); break;
+        case 'B': editParams([val](Params& p) { p.bodyDb = dsp::clampf(val, -12.0f, 12.0f); }); break;
         default:
             printf("unknown command (h for help)\n");
             return;

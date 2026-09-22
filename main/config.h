@@ -47,8 +47,8 @@
 // pitched preset happily sends it 40 Hz anyway: energy that only moves the
 // cone and eats into the amp's ~1.2 W. Highpassing the output discards it and
 // lets the harmonics carry the perceived pitch instead - the ear reconstructs
-// a missing fundamental quite happily. Measured on the Elephant preset it
-// removes ~15 dB below 90 Hz and costs 0.4 dB above 250 Hz.
+// a missing fundamental quite happily. Measured on a 17-semitone-down voice
+// it removes ~15 dB below 90 Hz and costs 0.4 dB above 250 Hz.
 //
 // It sits ahead of the limiter so discarded energy cannot contribute to gain
 // reduction, though measurement says that buys little in practice: the soft

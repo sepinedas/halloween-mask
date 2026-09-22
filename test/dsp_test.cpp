@@ -141,10 +141,11 @@ int main() {
         check(aliasAA < aliasNoAA * 0.1f, "anti-alias filter cuts the fold-back by 20 dB+");
     }
 
-    printf("elephant: sub-bass must not duck the audible band\n");
+    printf("deep shifts: sub-bass the speaker cannot render is discarded\n");
     {
-        // -17 st puts a 120 Hz voice near 41 Hz, which the mask speaker cannot
-        // reproduce. The output highpass removes it. Measured across a 20 dB
+        // A deep shift (-17 st here) puts a 120 Hz voice near 41 Hz, which
+        // the mask speaker cannot reproduce. The output highpass removes it,
+        // and this matters for any deep preset. Measured across a 20 dB
         // range of input levels this costs nothing audible (the only loss is
         // the filter's own skirt, ~0.4 dB at 250 Hz) -- note it does NOT make
         // the audible band louder: the soft clipper ahead of the limiter

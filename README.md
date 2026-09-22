@@ -2,9 +2,9 @@
 
 Real-time voice changer for an ESP-WROOM-32: an **ICS-43434** I2S MEMS mic goes in,
 a **MAX98357A** I2S class-D amp comes out, and in between the ESP32 pitches your
-voice down, drives it into soft clipping and drops it in a crypt — or pitches it a
-full octave up, for a squirrel. Runs off a single **18650** cell, or just USB.
-Seven presets, cycled with one button.
+voice down, drives it into soft clipping and drops it in a crypt — or takes it up,
+for a woman or a squirrel. Runs off a single **18650** cell, or just USB.
+Five presets, cycled with one button.
 
 Built with **ESP-IDF 5.x** (tested against the 5.2/5.3 API surface).
 
@@ -131,11 +131,9 @@ idf.py set-target esp32 && idf.py build && idf.py -p COM5 flash monitor
 | --- | --- | --- |
 | 0 | Demon | −7 semitones, moderate drive. The default. |
 | 1 | Deep Demon | −12 semitones, heavy drive, 25 Hz growl |
-| 2 | Ghoul Choir | Two voices (−5 and −12) with a long tail |
-| 3 | Possessed | −9 + −4, hard drive, 61 Hz ring mod |
+| 2 | Woman | +5 semitones with a body lift — see the caveat below |
+| 3 | Squirrel | A full octave up, clean and bright. Chipmunk, not demon |
 | 4 | Clean | No shift, no effects — use this to test wiring |
-| 5 | Squirrel | A full octave up, clean and bright. Chipmunk, not demon |
-| 6 | Elephant | 17 semitones down with an 18 Hz flutter. A rumble, not a trumpet |
 
 **Serial console** at 115200 — tune by ear without reflashing, then copy the numbers
 you like into `main/presets.h`. Press `h` for the list:
@@ -151,6 +149,7 @@ s         stats (CPU load, levels)      l        live level meter
 x         swap mic I2S slot             m        mute
 b         read the battery sense pin (raw ADC + pin mV)
 T         test tone on/off (bypasses mic and DSP)
+B 4       body lift at 600 Hz, dB
 ```
 
 ### Getting it loud
@@ -207,13 +206,30 @@ a 6th-order Butterworth lowpass on the input, set to `0.45 · fs / ratio`. Measu
 on a 10 kHz tone shifted an octave up, that drops the fold-back by 29 dB; a single
 biquad only managed 10 dB, which is why it is a cascade.
 
-Pitching *down* hits a hardware wall instead. Elephant sits 17 semitones below
-your voice, which puts a male speaker near 41 Hz — a 40 mm speaker will never
-reproduce that. The heavy drive on that preset is doing real work: it generates
-harmonics the speaker *can* render, and the ear reconstructs the missing
-fundamental from them. The output is then highpassed at `SPEAKER_HP_HZ` (120 Hz)
-so the amp does not waste its ~1.2 W moving the cone at frequencies nobody will
-hear — measured at 15 dB removed below 90 Hz for 0.4 dB lost above 250 Hz.
+Pitching *down* hits a hardware wall instead. Deep Demon sits 12 semitones below
+your voice, putting a male speaker near 55 Hz, and a 40 mm speaker will not
+reproduce that. The heavy drive on the deep presets is doing real work: it
+generates harmonics the speaker *can* render, and the ear reconstructs the
+missing fundamental from them. The output is then highpassed at `SPEAKER_HP_HZ`
+(120 Hz) so the amp does not waste its ~1.2 W moving the cone at frequencies
+nobody will hear — measured on a 17-semitone shift at 15 dB removed below 90 Hz
+for 0.4 dB lost above 250 Hz.
+
+### Why the Woman preset is a compromise
+
+This shifter **resamples**, so pitch and formants move together. That is exactly
+right for Squirrel — a chipmunk *is* a small resonant cavity — but wrong for a
+woman. Male F0 runs 85–155 Hz against a female 165–255 Hz, which argues for about
++7 semitones; but a woman's vocal tract is only ~15% shorter than a man's, not
+50%, so her formants sit only ~15–20% higher. Shift +7 and the formants rise 50%
+too, and the result reads as a *child*.
+
+Separating the two needs LPC or phase-vocoder formant shifting, which is a lot of
+machinery for a mask. So the preset compromises: **+5 semitones** rather than +7,
+and a broad **+4 dB lift at 600 Hz** (`bodyDb`, or `B` on the console) to put back
+some of the chest that an upward shift thins out. It reads as a lighter, higher
+voice rather than a convincing woman — worth knowing before you judge it. Tune it
+live with `p` and `B` if your voice sits somewhere else.
 
 The waveshaper deliberately has **no make-up attenuation**. It used to scale its
 output by `1/(0.5 + 0.5·drive)` to hold loudness steady as drive rose, which had
