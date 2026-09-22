@@ -66,11 +66,15 @@ static volatile bool s_meter = false;
 static volatile float s_cpuLoad = 0.0f;
 static volatile float s_peakIn = 0.0f;
 static volatile float s_peakOut = 0.0f;
-// Raw 24-bit extremes straight off the I2S bus, before any gain. A dead flat
-// 0..0 means the data line is stuck low or the peripheral is not sampling;
-// a mic that is merely quiet still dithers by a few counts.
-static volatile int32_t s_rawMin = 0;
-static volatile int32_t s_rawMax = 0;
+// Raw 24-bit extremes straight off the I2S bus, before any gain, for BOTH
+// slots regardless of which one we are listening to. A mic that is merely
+// quiet still dithers by a few counts, so a dead flat 0..0 on both slots
+// means no data is arriving on DIN at all - a clock, ground or wiring fault,
+// not a slot-selection mistake.
+static volatile int32_t s_rawMinL = 0;
+static volatile int32_t s_rawMaxL = 0;
+static volatile int32_t s_rawMinR = 0;
+static volatile int32_t s_rawMaxR = 0;
 static volatile int s_vbatMv = 0;
 
 static i2s_chan_handle_t s_tx = nullptr;
@@ -203,13 +207,19 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
         return;
     }
 
-    int32_t rawMin = INT32_MAX, rawMax = INT32_MIN;
+    int32_t minL = INT32_MAX, maxL = INT32_MIN, minR = INT32_MAX, maxR = INT32_MIN;
 
     for (int i = 0; i < frames; ++i) {
         // The ICS-43434 sends 24 bits MSB-first, left-justified in the slot.
-        const int32_t raw = in[2 * i + slot] >> 8;
-        if (raw < rawMin) rawMin = raw;
-        if (raw > rawMax) rawMax = raw;
+        // Watch both slots so a wrong MIC_SLOT_DEFAULT cannot hide a live mic.
+        const int32_t rawL = in[2 * i] >> 8;
+        const int32_t rawR = in[2 * i + 1] >> 8;
+        if (rawL < minL) minL = rawL;
+        if (rawL > maxL) maxL = rawL;
+        if (rawR < minR) minR = rawR;
+        if (rawR > maxR) maxR = rawR;
+
+        const int32_t raw = slot == 0 ? rawL : rawR;
         float x = static_cast<float>(raw) * (1.0f / 8388608.0f);
 
         const float a = fabsf(x);
@@ -256,8 +266,10 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
 
     s_peakIn = peakIn;
     s_peakOut = peakOut;
-    s_rawMin = rawMin;
-    s_rawMax = rawMax;
+    s_rawMinL = minL;
+    s_rawMaxL = maxL;
+    s_rawMinR = minR;
+    s_rawMaxR = maxR;
 }
 
 static void audioTask(void*) {
@@ -617,10 +629,11 @@ static void uiTask(void*) {
         const bool startupMeter = now < static_cast<int64_t>(STARTUP_METER_SEC) * 1000000;
         if ((s_meter || startupMeter) && (now - lastMeter) > 1000000) {
             lastMeter = now;
-            printf("in %.4f  out %.4f  raw[%ld..%ld] slot %s  cpu %.1f%%  preset %d (%s)%s\n",
-                   s_peakIn, s_peakOut, static_cast<long>(s_rawMin), static_cast<long>(s_rawMax),
-                   s_micSlot == 0 ? "L" : "R", s_cpuLoad, s_preset, kPresets[s_preset].name,
-                   s_toneHold || s_toneFrames > 0 ? "  TEST TONE" : "");
+            printf("in %.4f  out %.4f  L[%ld..%ld] R[%ld..%ld] using %s  cpu %.1f%%  %s%s\n",
+                   s_peakIn, s_peakOut, static_cast<long>(s_rawMinL),
+                   static_cast<long>(s_rawMaxL), static_cast<long>(s_rawMinR),
+                   static_cast<long>(s_rawMaxR), s_micSlot == 0 ? "L" : "R", s_cpuLoad,
+                   kPresets[s_preset].name, s_toneHold || s_toneFrames > 0 ? "  TEST TONE" : "");
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
