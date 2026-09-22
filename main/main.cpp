@@ -66,6 +66,11 @@ static volatile bool s_meter = false;
 static volatile float s_cpuLoad = 0.0f;
 static volatile float s_peakIn = 0.0f;
 static volatile float s_peakOut = 0.0f;
+// Raw 24-bit extremes straight off the I2S bus, before any gain. A dead flat
+// 0..0 means the data line is stuck low or the peripheral is not sampling;
+// a mic that is merely quiet still dithers by a few counts.
+static volatile int32_t s_rawMin = 0;
+static volatile int32_t s_rawMax = 0;
 static volatile int s_vbatMv = 0;
 
 static i2s_chan_handle_t s_tx = nullptr;
@@ -198,9 +203,13 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
         return;
     }
 
+    int32_t rawMin = INT32_MAX, rawMax = INT32_MIN;
+
     for (int i = 0; i < frames; ++i) {
         // The ICS-43434 sends 24 bits MSB-first, left-justified in the slot.
         const int32_t raw = in[2 * i + slot] >> 8;
+        if (raw < rawMin) rawMin = raw;
+        if (raw > rawMax) rawMax = raw;
         float x = static_cast<float>(raw) * (1.0f / 8388608.0f);
 
         const float a = fabsf(x);
@@ -247,6 +256,8 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
 
     s_peakIn = peakIn;
     s_peakOut = peakOut;
+    s_rawMin = rawMin;
+    s_rawMax = rawMax;
 }
 
 static void audioTask(void*) {
@@ -606,8 +617,9 @@ static void uiTask(void*) {
         const bool startupMeter = now < static_cast<int64_t>(STARTUP_METER_SEC) * 1000000;
         if ((s_meter || startupMeter) && (now - lastMeter) > 1000000) {
             lastMeter = now;
-            printf("in %.4f  out %.4f  cpu %.1f%%  preset %d (%s)%s\n", s_peakIn, s_peakOut,
-                   s_cpuLoad, s_preset, kPresets[s_preset].name,
+            printf("in %.4f  out %.4f  raw[%ld..%ld] slot %s  cpu %.1f%%  preset %d (%s)%s\n",
+                   s_peakIn, s_peakOut, static_cast<long>(s_rawMin), static_cast<long>(s_rawMax),
+                   s_micSlot == 0 ? "L" : "R", s_cpuLoad, s_preset, kPresets[s_preset].name,
                    s_toneHold || s_toneFrames > 0 ? "  TEST TONE" : "");
         }
 
