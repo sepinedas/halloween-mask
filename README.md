@@ -29,24 +29,31 @@ Built with **ESP-IDF 5.x** (tested against the 5.2/5.3 API surface).
 Mic and amp are both I2S slaves, so they **share BCLK and WS** — the firmware runs
 one I2S controller in full-duplex mode. One clock domain, no capture/playback drift.
 
-| ESP32 | ICS-43434 | MAX98357A | Other |
+Breakouts silkscreen these pins differently from the datasheets. Both names are
+given below — **match the silkscreen on your board**, not the datasheet column.
+
+| ESP32 | ICS-43434 (silkscreen / datasheet) | MAX98357A | Other |
 | --- | --- | --- | --- |
-| GPIO26 | SCK | BCLK | |
-| GPIO25 | WS | LRC | |
-| GPIO33 | SD (data out) | | mic → ESP32 |
+| GPIO26 | `BCLK` / SCK | BCLK | |
+| GPIO25 | `LRCL` / WS | LRC | |
+| GPIO33 | `DOUT` / SD | | mic → ESP32 |
 | GPIO22 | | DIN | ESP32 → amp |
 | GPIO21 | | SD_MODE | high = on, low = shutdown |
 | GPIO4 | | | button to GND (internal pull-up) |
 | GPIO2 | | | on-board LED |
 | GPIO34 | | | battery divider midpoint |
-| 3V3 | VDD | Vin | everything runs on 3.3 V |
-| GND | GND, **L/R** | GND | |
+| 3V3 | `3V` / VDD | Vin | everything runs on 3.3 V |
+| GND | `GND`, and **`SEL`** / L/R | GND | see below |
 
-Two details that will cost you an evening if you miss them:
+Three details that will cost you an evening if you miss them:
 
-- **Tie the mic's L/R pin to GND.** That puts its data in the left I2S slot, which is
-  what `MIC_SLOT_DEFAULT` expects. If you hear nothing, press `x` on the console to
-  read the right slot instead.
+- **`SEL` is not the data pin.** The datasheet calls the data output `SD`, but the
+  breakout silkscreens it `DOUT`; `SEL` is the channel-select pin. Wiring `SEL` to
+  GPIO33 and leaving `DOUT` unconnected gives a mask where everything works except
+  the microphone, and every voltage you measure looks correct.
+- **Tie `SEL` (L/R) to GND.** Not floating — tied. That puts the mic's data in the
+  left I2S slot, which is what `MIC_SLOT_DEFAULT` expects. If the meter shows the
+  level on the right slot instead, press `x` on the console or flip that define.
 - The amp's **GAIN** pin sets the analog gain: floating = 9 dB, to GND = 12 dB,
   100 kΩ to GND = 15 dB. On a 3.3 V rail, start at **15 dB** (100 kΩ to GND).
 
