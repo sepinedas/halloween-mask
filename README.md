@@ -4,7 +4,7 @@ Real-time voice changer for an ESP-WROOM-32: an **ICS-43434** I2S MEMS mic goes 
 a **MAX98357A** I2S class-D amp comes out, and in between the ESP32 pitches your
 voice down, drives it into soft clipping and drops it in a crypt — or pitches it a
 full octave up, for a squirrel. Runs off a single **18650** cell, or just USB.
-Six presets, cycled with one button.
+Seven presets, cycled with one button.
 
 Built with **ESP-IDF 5.x** (tested against the 5.2/5.3 API surface).
 
@@ -135,6 +135,7 @@ idf.py set-target esp32 && idf.py build && idf.py -p COM5 flash monitor
 | 3 | Possessed | −9 + −4, hard drive, 61 Hz ring mod |
 | 4 | Clean | No shift, no effects — use this to test wiring |
 | 5 | Squirrel | A full octave up, clean and bright. Chipmunk, not demon |
+| 6 | Elephant | 17 semitones down with an 18 Hz flutter. A rumble, not a trumpet |
 
 **Serial console** at 115200 — tune by ear without reflashing, then copy the numbers
 you like into `main/presets.h`. Press `h` for the list:
@@ -160,7 +161,8 @@ T         test tone on/off (bypasses mic and DSP)
 mic ─► gain ─► DC block ─► highpass ─► gate ─► anti-alias ─┬─► pitch shift 1 ─┐
                                         (only pitching up) ├─► pitch shift 2 ─┤
                                                            └─── dry ──────────┴─►
-       ─► ring mod ─► soft clip ─► tone lowpass ─► reverb ─► limiter ─► amp
+       ─► ring mod ─► soft clip ─► tone lowpass ─► reverb ─► speaker HP ─►
+       ─► limiter ─► amp
 ```
 
 32 kHz, 128-sample blocks, all float. **The sample rate is not arbitrary:** the
@@ -183,6 +185,14 @@ audible band — sibilants turn metallic. So any preset with a positive pitch en
 a 6th-order Butterworth lowpass on the input, set to `0.45 · fs / ratio`. Measured
 on a 10 kHz tone shifted an octave up, that drops the fold-back by 29 dB; a single
 biquad only managed 10 dB, which is why it is a cascade.
+
+Pitching *down* hits a hardware wall instead. Elephant sits 17 semitones below
+your voice, which puts a male speaker near 41 Hz — a 40 mm speaker will never
+reproduce that. The heavy drive on that preset is doing real work: it generates
+harmonics the speaker *can* render, and the ear reconstructs the missing
+fundamental from them. The output is then highpassed at `SPEAKER_HP_HZ` (120 Hz)
+so the amp does not waste its ~1.2 W moving the cone at frequencies nobody will
+hear — measured at 15 dB removed below 90 Hz for 0.4 dB lost above 250 Hz.
 
 The rest is a noise gate with hysteresis (it also breaks the feedback loop between a
 speaker on the outside of a mask and a mic on the inside), a `tanh`-ish waveshaper,

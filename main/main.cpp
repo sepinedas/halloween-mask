@@ -86,6 +86,9 @@ static dsp::Biquad s_hp;
 static dsp::Biquad s_lp;
 static dsp::SteepLowpass s_aa;  // input anti-alias, only when pitching up
 static bool s_useAA = false;
+#if SPEAKER_HP_HZ > 0
+static dsp::Biquad s_outHp;     // keeps sub-bass out of the limiter
+#endif
 static dsp::NoiseGate s_gate;
 static dsp::PitchShifter s_ps1;
 static dsp::PitchShifter s_ps2;
@@ -105,6 +108,9 @@ static void applyParams(const Params& p) {
     s_ps1.setRatio(powf(2.0f, p.pitch1 / 12.0f));
     s_ps2.setRatio(powf(2.0f, p.pitch2 / 12.0f));
     s_hp.highpass(p.hpHz, 0.707f, SAMPLE_RATE);
+#if SPEAKER_HP_HZ > 0
+    s_outHp.highpass(static_cast<float>(SPEAKER_HP_HZ), 0.707f, SAMPLE_RATE);
+#endif
     s_lp.lowpass(p.lpHz, 0.707f, SAMPLE_RATE);
     s_ring.setFreq(p.ringHz, SAMPLE_RATE);
     s_gate.setThreshold(p.gateThr);
@@ -262,6 +268,11 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
             y += s_reverb.process(y) * p.reverbMix;
         }
 
+#if SPEAKER_HP_HZ > 0
+        // Ahead of the limiter so discarded sub-bass cannot contribute to
+        // gain reduction. Mostly it just keeps the cone still and saves power.
+        y = s_outHp.process(y);
+#endif
         y = s_limiter.process(y * p.outGain);
 
         if (p.muted) y = 0.0f;

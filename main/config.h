@@ -42,6 +42,19 @@
 // mask can be brought up on a monitor that only shows output. 0 disables.
 #define STARTUP_METER_SEC 20
 
+// -------------------------------------------------------------- speaker ----
+// A 40 mm mask speaker makes nothing useful below roughly this, but a deeply
+// pitched preset happily sends it 40 Hz anyway: energy that only moves the
+// cone and eats into the amp's ~1.2 W. Highpassing the output discards it and
+// lets the harmonics carry the perceived pitch instead - the ear reconstructs
+// a missing fundamental quite happily. Measured on the Elephant preset it
+// removes ~15 dB below 90 Hz and costs 0.4 dB above 250 Hz.
+//
+// It sits ahead of the limiter so discarded energy cannot contribute to gain
+// reduction, though measurement says that buys little in practice: the soft
+// clipper already governs the envelope. Set to 0 to disable.
+#define SPEAKER_HP_HZ 120
+
 // -------------------------------------------------------------- battery ----
 #ifndef BATTERY_MONITOR                 // -DBATTERY_MONITOR=0 also works
 #define BATTERY_MONITOR   1             // 0 if you did not fit the divider

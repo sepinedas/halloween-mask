@@ -141,6 +141,88 @@ int main() {
         check(aliasAA < aliasNoAA * 0.1f, "anti-alias filter cuts the fold-back by 20 dB+");
     }
 
+    printf("elephant: sub-bass must not duck the audible band\n");
+    {
+        // -17 st puts a 120 Hz voice near 41 Hz, which the mask speaker cannot
+        // reproduce. The output highpass removes it. Measured across a 20 dB
+        // range of input levels this costs nothing audible (the only loss is
+        // the filter's own skirt, ~0.4 dB at 250 Hz) -- note it does NOT make
+        // the audible band louder: the soft clipper ahead of the limiter
+        // already governs the envelope, so the discarded sub-bass was not
+        // buying gain reduction the way one might assume.
+        float audible[2] = {0.0f, 0.0f}, sub[2] = {0.0f, 0.0f};
+
+        for (int withHp = 0; withHp < 2; ++withHp) {
+            dsp::DCBlocker dc;
+            dsp::Biquad hp, lp, outHp;
+            dsp::NoiseGate gate;
+            dsp::PitchShifter ps;
+            dsp::RingMod ring;
+            dsp::Reverb rev;
+            dsp::Limiter lim;
+
+            hp.highpass(120.0f, 0.707f, FS);
+            lp.lowpass(2600.0f, 0.707f, FS);
+            outHp.highpass(120.0f, 0.707f, FS);
+            gate.init(FS);
+            gate.setThreshold(0.006f);
+            ps.setRatio(std::pow(2.0f, -17.0f / 12.0f));
+            ps.reset();
+            ring.setFreq(18.0f, FS);
+            rev.init(FS);
+            lim.init(FS);
+
+            const float drive = 5.5f, comp = 1.0f / (0.5f + 0.5f * drive);
+            std::vector<float> out((int)FS * 2);
+            for (size_t i = 0; i < out.size(); ++i) {
+                const float t = i / FS;
+                float x = 0.05f * (std::sin(2.0f * dsp::kPi * 120.0f * t) +
+                                   0.6f * std::sin(2.0f * dsp::kPi * 480.0f * t) +
+                                   0.3f * std::sin(2.0f * dsp::kPi * 1500.0f * t));
+                x = dc.process(x * 6.0f);
+                x = hp.process(x);
+                x = gate.process(x);
+                float y = ps.process(x);
+                y = y * 0.70f + y * ring.next() * 0.30f;
+                y = dsp::softClip(y * drive) * comp;
+                y = lp.process(y);
+                y += rev.process(y) * 0.28f;
+                if (withHp) y = outHp.process(y);
+                out[i] = lim.process(y * 0.85f);
+            }
+
+            // Split the tail of the run into "what the speaker can render"
+            // and "what it cannot", with steep-ish 4th-order splits.
+            dsp::Biquad a1, a2, s1, s2;
+            a1.highpass(250.0f, 0.707f, FS);
+            a2.highpass(250.0f, 0.707f, FS);
+            s1.lowpass(90.0f, 0.707f, FS);
+            s2.lowpass(90.0f, 0.707f, FS);
+            double ae = 0.0, se = 0.0;
+            int n = 0;
+            for (size_t i = 0; i < out.size(); ++i) {
+                const float a = a2.process(a1.process(out[i]));
+                const float b = s2.process(s1.process(out[i]));
+                if (i > FS) {            // let the reverb and limiter settle
+                    ae += a * a;
+                    se += b * b;
+                    ++n;
+                }
+            }
+            audible[withHp] = std::sqrt(ae / n);
+            sub[withHp] = std::sqrt(se / n);
+            check(finite(out), withHp ? "no NaN/Inf with highpass" : "no NaN/Inf without");
+            check(peak(out, (int)FS) <= 0.95f, "output stays below full scale");
+        }
+
+        printf("  below 90 Hz : %.5f -> %.5f (%.1f dB removed)\n", sub[0], sub[1],
+               20.0f * std::log10(sub[0] / std::max(sub[1], 1e-9f)));
+        printf("  above 250 Hz: %.5f -> %.5f (%+.1f dB audible)\n", audible[0], audible[1],
+               20.0f * std::log10(audible[1] / std::max(audible[0], 1e-9f)));
+        check(sub[1] < sub[0] * 0.5f, "sub-bass the speaker cannot use is removed");
+        check(audible[1] > audible[0] * 0.9f, "audible band survives intact (within ~1 dB)");
+    }
+
     printf("reverb\n");
     {
         dsp::Reverb rv;

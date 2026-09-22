@@ -29,6 +29,12 @@ static const Preset kPresets[] = {
     // because a squirrel is not in a crypt. The pitch-up aliasing is handled
     // by the input anti-alias filter, not by dulling the output.
     {"Squirrel",      12.0f,   0.0f, 0.0f, 0.00f, 1.2f,  0.0f, 0.00f, 0.04f, 8000.0f, 0.85f},
+    // Elephant: a rumble, not a trumpet. 17 semitones down puts a male voice
+    // near 40 Hz, which no mask speaker will ever reproduce - so the heavy
+    // drive is doing real work here, generating harmonics the speaker can
+    // render while the ear reconstructs the missing fundamental. The 18 Hz
+    // ring modulation is the flutter that makes a big animal sound big.
+    {"Elephant",     -17.0f,   0.0f, 0.0f, 0.00f, 5.5f, 18.0f, 0.30f, 0.28f, 2600.0f, 0.85f},
 };
 
 static const int kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
