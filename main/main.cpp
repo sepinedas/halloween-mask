@@ -84,6 +84,8 @@ static i2s_chan_handle_t s_rx = nullptr;
 static dsp::DCBlocker s_dc;
 static dsp::Biquad s_hp;
 static dsp::Biquad s_lp;
+static dsp::SteepLowpass s_aa;  // input anti-alias, only when pitching up
+static bool s_useAA = false;
 static dsp::NoiseGate s_gate;
 static dsp::PitchShifter s_ps1;
 static dsp::PitchShifter s_ps2;
@@ -95,8 +97,7 @@ static float s_driveComp = 1.0f;
 
 // Bring-up test tone: bypasses the whole chain and the mic entirely.
 static dsp::RingMod s_toneOsc;
-static volatile int s_toneFrames = 0;    // counts down, 0 = off
-static volatile bool s_toneHold = false; // console-latched, runs until cleared
+static volatile bool s_toneHold = false; // console-latched with 'T'
 
 // ----------------------------------------------------------- parameters ----
 
@@ -107,6 +108,18 @@ static void applyParams(const Params& p) {
     s_lp.lowpass(p.lpHz, 0.707f, SAMPLE_RATE);
     s_ring.setFreq(p.ringHz, SAMPLE_RATE);
     s_gate.setThreshold(p.gateThr);
+
+    // Pitching up reads the delay line faster than it is written, so input
+    // content above Nyquist/ratio folds back as aliasing - audible as harsh,
+    // metallic sibilants. Band-limit the input before the shifters sees it.
+    float maxRatio = powf(2.0f, p.pitch1 / 12.0f);
+    if (p.mix2 > 0.001f) {
+        maxRatio = fmaxf(maxRatio, powf(2.0f, p.pitch2 / 12.0f));
+    }
+    s_useAA = maxRatio > 1.01f;
+    if (s_useAA) {
+        s_aa.set(0.45f * SAMPLE_RATE / maxRatio, SAMPLE_RATE);
+    }
     s_reverb.setDecay(0.70f + 0.20f * dsp::clampf(p.reverbMix * 3.0f, 0.0f, 1.0f));
     // Keep perceived loudness roughly constant as drive goes up.
     s_driveComp = 1.0f / (0.5f + 0.5f * p.drive);
@@ -191,7 +204,7 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
 
     // Test tone wins over everything: if this is silent, the fault is in the
     // amp, its supply or the speaker, not in the mic or the DSP.
-    if (s_toneHold || s_toneFrames > 0) {
+    if (s_toneHold) {
         for (int i = 0; i < frames; ++i) {
             const float y = TEST_TONE_LEVEL * s_toneOsc.next();
             const float mag = fabsf(y);
@@ -199,9 +212,6 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
             const int32_t o = static_cast<int32_t>(y * 8388607.0f) << 8;
             out[2 * i] = o;
             out[2 * i + 1] = o;
-        }
-        if (s_toneFrames > 0) {
-            s_toneFrames = (s_toneFrames > frames) ? s_toneFrames - frames : 0;
         }
         s_peakOut = peakOut;
         return;
@@ -229,6 +239,7 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
         x = s_dc.process(x);
         x = s_hp.process(x);
         x = s_gate.process(x);
+        if (s_useAA) x = s_aa.process(x);
 
         // Pitch: one or two detuned voices, plus a little dry signal so
         // consonants stay intelligible through the mask.
@@ -448,7 +459,6 @@ static void handleLine(char* line) {
             return;
         case 'T':
             s_toneHold = !s_toneHold;
-            s_toneFrames = 0;
             printf("test tone %s (%.0f Hz, bypasses mic and DSP)\n",
                    s_toneHold ? "ON" : "off", TEST_TONE_HZ);
             return;
@@ -633,7 +643,7 @@ static void uiTask(void*) {
                    s_peakIn, s_peakOut, static_cast<long>(s_rawMinL),
                    static_cast<long>(s_rawMaxL), static_cast<long>(s_rawMinR),
                    static_cast<long>(s_rawMaxR), s_micSlot == 0 ? "L" : "R", s_cpuLoad,
-                   kPresets[s_preset].name, s_toneHold || s_toneFrames > 0 ? "  TEST TONE" : "");
+                   kPresets[s_preset].name, s_toneHold ? "  TEST TONE" : "");
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -688,12 +698,6 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "amp enabled (SD_MODE high on GPIO%d)", PIN_AMP_SD);
 
     s_toneOsc.setFreq(TEST_TONE_HZ, SAMPLE_RATE);
-#if TEST_TONE_ON_BOOT
-    s_toneFrames = SAMPLE_RATE * TEST_TONE_MS / 1000;
-    ESP_LOGI(TAG, "playing %.0f Hz test tone for %d ms - if you hear nothing, the "
-                  "fault is the amp, its supply or the speaker, not the mic",
-             TEST_TONE_HZ, TEST_TONE_MS);
-#endif
 
     ESP_LOGI(TAG, "running at %d Hz, %d-frame blocks (%.1f ms)", SAMPLE_RATE,
              AUDIO_BLOCK, 1000.0f * AUDIO_BLOCK / SAMPLE_RATE);

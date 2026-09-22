@@ -97,6 +97,29 @@ private:
     bool open_ = false;
 };
 
+// --------------------------------------------------- steep lowpass -------
+// Sixth-order Butterworth, three cascaded biquads. Used to band-limit the
+// input ahead of an upward pitch shift: a single 2nd-order section only
+// manages ~10 dB at 1.4x its cutoff, which is not enough to stop sibilants
+// folding back over Nyquist and turning metallic.
+class SteepLowpass {
+public:
+    void set(float fc, float fs) {
+        // Butterworth pole Qs for a 6th-order cascade.
+        static const float kQ[3] = {0.5176f, 0.7071f, 1.9319f};
+        for (int i = 0; i < 3; ++i) stage_[i].lowpass(fc, kQ[i], fs);
+    }
+    inline float process(float x) {
+        return stage_[2].process(stage_[1].process(stage_[0].process(x)));
+    }
+    void reset() {
+        for (int i = 0; i < 3; ++i) stage_[i].reset();
+    }
+
+private:
+    Biquad stage_[3];
+};
+
 // ------------------------------------------------------- pitch shifter ----
 // WSOLA (waveform-similarity overlap-add) on a delay line.
 //

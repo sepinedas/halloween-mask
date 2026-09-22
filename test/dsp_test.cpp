@@ -87,6 +87,7 @@ int main() {
     testPitch(-12.0f, 110.0f);
     testPitch(0.0f, 220.0f);
     testPitch(+5.0f, 220.0f * std::pow(2.0f, 5.0f / 12.0f));
+    testPitch(+12.0f, 440.0f);   // Squirrel preset sits at the ratio clamp
 
     printf("grain sidebands (regression: fixed-jump splices suppressed the carrier)\n");
     for (float semis : {-7.0f, -12.0f}) {
@@ -109,6 +110,35 @@ int main() {
                worst, 20.0f * std::log10(c / std::max(worst, 1e-9f)));
         check(c > 0.12f, "carrier survives at near full amplitude");
         check(worst < c * 0.1f, "grain sidebands at least 20 dB below carrier");
+    }
+
+    printf("squirrel anti-aliasing (+12 st folds >8 kHz input back into band)\n");
+    {
+        // A 10 kHz input shifted up an octave lands at 20 kHz, past the 16 kHz
+        // Nyquist, and folds back to 12 kHz. The Squirrel preset band-limits
+        // the input first; without that, sibilants turn metallic.
+        const float fin = 10000.0f, falias = FS - 2.0f * fin;  // 20 kHz folds to 12 kHz
+        float aliasNoAA = 0.0f, aliasAA = 0.0f;
+
+        for (int withAA = 0; withAA < 2; ++withAA) {
+            dsp::PitchShifter ps;
+            ps.setRatio(2.0f);
+            ps.reset();
+            dsp::SteepLowpass aa;
+            aa.set(0.45f * FS / 2.0f, FS);
+
+            std::vector<float> out((int)FS);
+            for (size_t i = 0; i < out.size(); ++i) {
+                float x = 0.3f * std::sin(2.0f * dsp::kPi * fin * i / FS);
+                if (withAA) x = aa.process(x);
+                out[i] = ps.process(x);
+            }
+            (withAA ? aliasAA : aliasNoAA) = magAt(out, 8000, falias);
+        }
+        printf("  alias at %.0f Hz: %.5f without filter, %.5f with (%.1f dB better)\n",
+               falias, aliasNoAA, aliasAA,
+               20.0f * std::log10(aliasNoAA / std::max(aliasAA, 1e-9f)));
+        check(aliasAA < aliasNoAA * 0.1f, "anti-alias filter cuts the fold-back by 20 dB+");
     }
 
     printf("reverb\n");

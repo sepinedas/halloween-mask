@@ -24,6 +24,11 @@ static const Preset kPresets[] = {
     {"Ghoul Choir",   -5.0f, -12.0f, 0.5f, 0.10f, 1.8f,  0.0f, 0.00f, 0.30f, 4500.0f, 0.85f},
     {"Possessed",     -9.0f,  -4.0f, 0.3f, 0.00f, 6.0f, 61.0f, 0.40f, 0.25f, 3000.0f, 0.8f},
     {"Clean (test)",   0.0f,   0.0f, 0.0f, 1.00f, 1.0f,  0.0f, 0.00f, 0.00f, 7000.0f, 0.9f},
+    // Squirrel: a full octave up, kept clean and bright. No dry blend - any
+    // of the original voice underneath ruins the illusion - and no reverb,
+    // because a squirrel is not in a crypt. The pitch-up aliasing is handled
+    // by the input anti-alias filter, not by dulling the output.
+    {"Squirrel",      12.0f,   0.0f, 0.0f, 0.00f, 1.2f,  0.0f, 0.00f, 0.04f, 8000.0f, 0.85f},
 };
 
 static const int kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);

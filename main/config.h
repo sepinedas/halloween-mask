@@ -31,15 +31,11 @@
 #define MIC_SLOT_DEFAULT  0
 
 // ------------------------------------------------------------- bring-up ----
-// Beep at boot. This proves the amp, its supply, the I2S TX path and the
-// speaker all work, without involving the microphone or the console - so when
-// something is silent it tells you which half of the board to look at.
-// Set to 0 once the mask works; 'T' on the console toggles a held tone.
-#ifndef TEST_TONE_ON_BOOT               // -DTEST_TONE_ON_BOOT=0 also works
-#define TEST_TONE_ON_BOOT 1
-#endif
+// Test tone, toggled with 'T' on the console. It bypasses the microphone and
+// the whole DSP chain, so it isolates the output half of the board: if the
+// tone is audible, the amp, its supply, the speaker and the I2S TX path are
+// all good and any remaining silence is the microphone's fault.
 #define TEST_TONE_HZ      440.0f
-#define TEST_TONE_MS      2000
 #define TEST_TONE_LEVEL   0.25f
 
 // Print input/output levels once a second for this long after boot, so the

@@ -2,8 +2,9 @@
 
 Real-time voice changer for an ESP-WROOM-32: an **ICS-43434** I2S MEMS mic goes in,
 a **MAX98357A** I2S class-D amp comes out, and in between the ESP32 pitches your
-voice down, drives it into soft clipping and drops it in a crypt. Runs off a single
-**18650** cell. Five presets, cycled with one button.
+voice down, drives it into soft clipping and drops it in a crypt — or pitches it a
+full octave up, for a squirrel. Runs off a single **18650** cell, or just USB.
+Six presets, cycled with one button.
 
 Built with **ESP-IDF 5.x** (tested against the 5.2/5.3 API surface).
 
@@ -133,6 +134,7 @@ idf.py set-target esp32 && idf.py build && idf.py -p COM5 flash monitor
 | 2 | Ghoul Choir | Two voices (−5 and −12) with a long tail |
 | 3 | Possessed | −9 + −4, hard drive, 61 Hz ring mod |
 | 4 | Clean | No shift, no effects — use this to test wiring |
+| 5 | Squirrel | A full octave up, clean and bright. Chipmunk, not demon |
 
 **Serial console** at 115200 — tune by ear without reflashing, then copy the numbers
 you like into `main/presets.h`. Press `h` for the list:
@@ -147,6 +149,7 @@ o 0.9     output gain                   t 0.006  gate threshold
 s         stats (CPU load, levels)      l        live level meter
 x         swap mic I2S slot             m        mute
 b         read the battery sense pin (raw ADC + pin mV)
+T         test tone on/off (bypasses mic and DSP)
 ```
 
 ---
@@ -154,9 +157,9 @@ b         read the battery sense pin (raw ADC + pin mV)
 ## How it works
 
 ```
-mic ─► gain ─► DC block ─► highpass ─► noise gate ─┬─► pitch shift 1 ─┐
-                                                   ├─► pitch shift 2 ─┤
-                                                   └─── dry ──────────┴─►
+mic ─► gain ─► DC block ─► highpass ─► gate ─► anti-alias ─┬─► pitch shift 1 ─┐
+                                        (only pitching up) ├─► pitch shift 2 ─┤
+                                                           └─── dry ──────────┴─►
        ─► ring mod ─► soft clip ─► tone lowpass ─► reverb ─► limiter ─► amp
 ```
 
@@ -173,6 +176,13 @@ waveform. Measured on a 220 Hz tone down 7 semitones, that suppressed the wanted
 modulation, not pitch shifting. Searching ±9 ms for the best waveform match instead
 puts the carrier back at full amplitude with sidebands ~32 dB down. The search runs
 once per grain (10–25 times a second), not per sample.
+
+Pitching *up* needs one thing pitching down does not. Reading the delay line at 2×
+speed maps input above 8 kHz past the 16 kHz Nyquist, where it folds back into the
+audible band — sibilants turn metallic. So any preset with a positive pitch engages
+a 6th-order Butterworth lowpass on the input, set to `0.45 · fs / ratio`. Measured
+on a 10 kHz tone shifted an octave up, that drops the fold-back by 29 dB; a single
+biquad only managed 10 dB, which is why it is a cascade.
 
 The rest is a noise gate with hysteresis (it also breaks the feedback loop between a
 speaker on the outside of a mask and a mic on the inside), a `tanh`-ish waveshaper,
@@ -205,28 +215,39 @@ below full scale. All pass. The firmware also reports its own CPU load — press
 
 ## Bring-up order
 
-The firmware beeps a 440 Hz tone for 2 s at boot (`TEST_TONE_ON_BOOT` in
-`main/config.h`, `T` on the console to toggle a held tone). That tone bypasses the
-microphone and the whole DSP chain, so it splits the board cleanly in half:
+For the first 20 s after reset the firmware prints a level line every second, with
+no console input needed (`STARTUP_METER_SEC`):
 
-1. **Do you hear the boot beep?**
-   - *No* → the fault is the amp, its supply or the speaker. Nothing to do with the
-     mic. Check 3.3 V at the amp's Vin, check GPIO21 is high (~3.3 V) after boot, and
-     check the speaker: the MAX98357A output is **bridge-tied**, so the speaker floats
-     across `+` and `−`. Grounding either terminal gives you silence.
-   - *Yes* → the entire output path works. Move on.
-2. **Press `4`** (clean preset) **and `l`** (level meter), then talk.
-   - `in` stays `0.0000` → press `x` to read the other I2S slot, and check the mic's
-     L/R pin is grounded.
-   - `in` moves → press `0` for the demon voice.
+```
+in 0.0000  out 0.0000  L[-2..3] R[0..0] using L  cpu 9.8%  Demon
+```
+
+`L` and `R` are the raw 24-bit extremes on each I2S slot, straight off the bus
+before any gain. A live mic dithers by a few counts even in a silent room.
+
+1. **Press `T`** for the test tone. It bypasses the microphone and the whole DSP
+   chain, so it splits the board in half.
+   - *Silent* → the fault is the amp, its supply or the speaker. Check 3.3 V at the
+     amp's Vin, GPIO21 high (~3.3 V) after boot, and the speaker: the MAX98357A
+     output is **bridge-tied**, so the speaker floats across `+` and `−`. Grounding
+     either terminal gives silence.
+   - *Audible* → the whole output path works, including the I2S TX and clocks.
+2. **Check the raw slots** while talking.
+   - `L[0..0] R[0..0]` → no data on DIN at all. Check `DOUT` really goes to GPIO33
+     (it is not the pin marked `SEL`), that the mic has power and a ground return,
+     and that `BCLK`/`LRCL` reach the mic breakout.
+   - One side flat, the other moving → set `MIC_SLOT_DEFAULT` to match, or press `x`.
+   - Both moving → the mic is fine; press `4` for the clean preset and talk.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
-| No boot beep at all | Amp unpowered, SD_MODE low, or a speaker terminal shorted to GND (the output is bridge-tied — the speaker must float) |
+| No sound on the `T` test tone | Amp unpowered, SD_MODE low, or a speaker terminal shorted to GND (the output is bridge-tied — the speaker must float) |
 | Console prints but ignores keypresses | Fixed: `uart_param_config` must run *before* `uart_driver_install`, or RX stays dead |
-| Silence, `in` level is 0.000 (`l`) | Mic in the other I2S slot — press `x`, or check L/R is grounded |
+| Silence, `in` is 0.000, one raw slot moving | Mic is in the other I2S slot — press `x` or flip `MIC_SLOT_DEFAULT` |
+| Silence, both raw slots read `[0..0]` | No data on DIN: `DOUT` not wired to GPIO33 (`SEL` is a different pin), no ground return, or clocks not reaching the mic |
+| Squirrel sounds harsh or metallic on 's' sounds | Input anti-alias filter disabled or mis-set; it should engage automatically for any preset pitched up |
 | Silence, `in` moves but `out` is 0 | Muted, or SD_MODE not pulled high |
 | Hiss but no voice | Gate threshold too high: `t 0.002` |
 | Distorted even on preset 4 | Input gain too high: `g 3` |
