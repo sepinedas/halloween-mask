@@ -145,13 +145,34 @@ p -9      pitch voice 1, semitones      d 4.0    drive
 P -12     pitch voice 2                 f 30     ring mod frequency
 M 0.5     voice 2 mix                   r 0.3    ring mod mix
 y 0.1     dry blend                     v 0.2    reverb mix
-c 3500    tone lowpass, Hz              g 8      input gain
-o 0.9     output gain                   t 0.006  gate threshold
+c 3500    tone lowpass, Hz              g 14     input gain
+o 0.9     output gain                   t 0.014  gate threshold
 s         stats (CPU load, levels)      l        live level meter
 x         swap mic I2S slot             m        mute
 b         read the battery sense pin (raw ADC + pin mV)
 T         test tone on/off (bypasses mic and DSP)
 ```
+
+### Getting it loud
+
+At 3.3 V into 4 Ω the amp has about 1.2 W to give, so it is worth not wasting any
+of it. In rough order of how much each one buys you:
+
+| Lever | Gain | Notes |
+| --- | --- | --- |
+| **Seal the speaker into a baffle** | up to +6 dB | The biggest and cheapest win. An unbaffled small speaker cancels itself front-to-back and loses most of its midrange. Cut a snug hole, no gaps around the rim |
+| **`GAIN` pin → 100 kΩ to GND** | +6 dB | 15 dB instead of the 9 dB you get leaving it floating |
+| **4 Ω speaker, not 8 Ω** | +3 dB | Twice the power for the same voltage |
+| **Console `g`** | varies | Input gain. Raise until `out` on the meter peaks near 0.8 |
+| **Console `o`** | up to +1.5 dB | Output gain, presets ship at 0.8–0.9, maximum 1.0 |
+| **Console `d`** | varies | More drive is now louder as well as dirtier |
+| **5 V rail** | +4 dB | 3.2 W instead of 1.2 W — but that is the 3.3 V-only design decision, reversed |
+
+Two cautions. Raising `g` also raises the noise floor and makes feedback more
+likely, and because the gate sits *after* the input gain you should raise `t` in
+the same proportion or it will start opening on room noise. And a mask puts the
+speaker centimetres from the mic: if it howls, back off `o`, raise `t`, and point
+the speaker away from the mic before reaching for more gain.
 
 ---
 
@@ -193,6 +214,14 @@ harmonics the speaker *can* render, and the ear reconstructs the missing
 fundamental from them. The output is then highpassed at `SPEAKER_HP_HZ` (120 Hz)
 so the amp does not waste its ~1.2 W moving the cone at frequencies nobody will
 hear — measured at 15 dB removed below 90 Hz for 0.4 dB lost above 250 Hz.
+
+The waveshaper deliberately has **no make-up attenuation**. It used to scale its
+output by `1/(0.5 + 0.5·drive)` to hold loudness steady as drive rose, which had
+the effect of throwing away 10–15 dB: measured across the presets, output peaked
+between −10 and −15 dBFS and the limiter never engaged once. Since `softClip`
+already bounds its own output to ±1, that attenuation bought nothing. Removing it
+and raising the default input gain to 14 recovered 7–14 dB depending on the
+preset, and the limiter now does the job it was there for.
 
 The rest is a noise gate with hysteresis (it also breaks the feedback loop between a
 speaker on the outside of a mask and a mic on the inside), a `tanh`-ish waveshaper,

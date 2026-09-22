@@ -47,9 +47,9 @@ struct Params {
     float reverbMix = 0.12f;
     float lpHz = 4000.0f;
     float hpHz = 120.0f;
-    float inGain = 6.0f;      // ICS-43434 speech sits around -30 dBFS
+    float inGain = 14.0f;     // ICS-43434 speech sits around -30 dBFS
     float outGain = 0.9f;
-    float gateThr = 0.006f;
+    float gateThr = 0.014f;   // post-gain, so it tracks inGain
     bool muted = false;
 };
 
@@ -96,8 +96,6 @@ static dsp::RingMod s_ring;
 static dsp::Reverb s_reverb;
 static dsp::Limiter s_limiter;
 
-static float s_driveComp = 1.0f;
-
 // Bring-up test tone: bypasses the whole chain and the mic entirely.
 static dsp::RingMod s_toneOsc;
 static volatile bool s_toneHold = false; // console-latched with 'T'
@@ -127,8 +125,6 @@ static void applyParams(const Params& p) {
         s_aa.set(0.45f * SAMPLE_RATE / maxRatio, SAMPLE_RATE);
     }
     s_reverb.setDecay(0.70f + 0.20f * dsp::clampf(p.reverbMix * 3.0f, 0.0f, 1.0f));
-    // Keep perceived loudness roughly constant as drive goes up.
-    s_driveComp = 1.0f / (0.5f + 0.5f * p.drive);
     s_params = p;
 }
 
@@ -261,7 +257,12 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
             y = y * (1.0f - p.ringMix) + y * s_ring.next() * p.ringMix;
         }
 
-        y = dsp::softClip(y * p.drive) * s_driveComp;
+        // No make-up attenuation here. softClip already bounds its output to
+        // +/-1, so scaling down by 1/(0.5+0.5*drive) - which is what this used
+        // to do, to hold loudness steady as drive rose - threw away 10-15 dB
+        // and meant the limiter below never engaged at all. Let the drive be
+        // loud and let the limiter be the thing that catches peaks.
+        y = dsp::softClip(y * p.drive);
         y = s_lp.process(y);
 
         if (useReverb) {

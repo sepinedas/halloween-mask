@@ -172,7 +172,7 @@ int main() {
             rev.init(FS);
             lim.init(FS);
 
-            const float drive = 5.5f, comp = 1.0f / (0.5f + 0.5f * drive);
+            const float drive = 5.5f;   // no make-up attenuation, as in the firmware
             std::vector<float> out((int)FS * 2);
             for (size_t i = 0; i < out.size(); ++i) {
                 const float t = i / FS;
@@ -184,7 +184,7 @@ int main() {
                 x = gate.process(x);
                 float y = ps.process(x);
                 y = y * 0.70f + y * ring.next() * 0.30f;
-                y = dsp::softClip(y * drive) * comp;
+                y = dsp::softClip(y * drive);
                 y = lp.process(y);
                 y += rev.process(y) * 0.28f;
                 if (withHp) y = outHp.process(y);
@@ -290,7 +290,7 @@ int main() {
         rev.init(FS);
         lim.init(FS);
 
-        const float drive = 2.5f, comp = 1.0f / (0.5f + 0.5f * drive);
+        const float drive = 2.5f;   // no make-up attenuation, as in the firmware
         std::vector<float> out((int)FS);
         for (size_t i = 0; i < out.size(); ++i) {
             // glottal-ish buzz + formant-ish overtones at -30 dBFS
@@ -305,7 +305,7 @@ int main() {
             float y = ps1.process(x);
             y = y * 0.9f + x * 0.1f;
             y = y * 0.78f + y * ring.next() * 0.22f;
-            y = dsp::softClip(y * drive) * comp;
+            y = dsp::softClip(y * drive);
             y = lp.process(y);
             y += rev.process(y) * 0.12f;
             out[i] = lim.process(y * 0.9f);
