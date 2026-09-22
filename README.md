@@ -17,10 +17,10 @@ Built with **ESP-IDF 5.x** (tested against the 5.2/5.3 API surface).
 | ICS-43434 breakout | I2S MEMS mic, 24-bit |
 | MAX98357A breakout | I2S mono class-D amp, 3.2 W |
 | Speaker | 4 Ω, 3 W, 40 mm is a good size for a mask |
-| 18650 cell + holder | Use a **protected** cell |
+| 18650 cell + holder | Optional — see power below. Use a **protected** cell |
 | TP4056 charger module | The version with DW01 protection |
-| Boost converter (MT3608 or similar) | Battery to 5 V, see power below |
-| 2 × 100 kΩ | Battery sense divider |
+| Buck-boost module (TPS63020 / TPS63060) | Battery to a stiff 3.3 V |
+| 2 × 100 kΩ | Battery sense divider (optional) |
 | Momentary push button | Preset / mute |
 | 470–1000 µF electrolytic | Bulk cap across the amp supply |
 
@@ -39,7 +39,7 @@ one I2S controller in full-duplex mode. One clock domain, no capture/playback dr
 | GPIO4 | | | button to GND (internal pull-up) |
 | GPIO2 | | | on-board LED |
 | GPIO34 | | | battery divider midpoint |
-| 3V3 | VDD | | amp Vin goes to 5 V, not 3V3 |
+| 3V3 | VDD | Vin | everything runs on 3.3 V |
 | GND | GND, **L/R** | GND | |
 
 Two details that will cost you an evening if you miss them:
@@ -48,30 +48,51 @@ Two details that will cost you an evening if you miss them:
   what `MIC_SLOT_DEFAULT` expects. If you hear nothing, press `x` on the console to
   read the right slot instead.
 - The amp's **GAIN** pin sets the analog gain: floating = 9 dB, to GND = 12 dB,
-  100 kΩ to GND = 15 dB. Start floating.
+  100 kΩ to GND = 15 dB. On a 3.3 V rail, start at **15 dB** (100 kΩ to GND).
 
-### Power
+### Power — 3.3 V only, battery optional
+
+**USB alone is enough.** Plug the devkit in and it runs: no cell, no divider, no
+regulator. Battery monitoring is advisory, and an absent or unfitted sense divider
+is detected and ignored rather than treated as a flat cell.
+
+For a battery, everything runs from one 3.3 V rail:
 
 ```
-18650 ──► TP4056 (+protection) ──┬──► MT3608 boost 5V ──┬──► MAX98357A Vin
-           (charge via USB)      │                      └──► ESP32 5V/VIN pin
-                                 │
-                                 └──► 100k ──┬── GPIO34
+18650 ──► TP4056 (+protection) ──┬──► buck-boost 3.3 V ──┬──► ESP32 3V3 pin
+           (charge via USB)      │   (TPS63020 etc.)     └──► MAX98357A Vin
+                                 │                            + 470-1000 µF
+                                 └──► 100k ──┬── GPIO34             here
                                              │
                                             100k
                                              │
                                             GND
 ```
 
-- The amp wants 5 V to make its rated 3.2 W. You *can* run it straight off the cell
-  (2.5–5.5 V is in spec) and skip the boost, but it gets noticeably quieter as the
-  cell drains — then feed the ESP32's **3V3 pin** from a low-dropout regulator, since
-  a devkit's AMS1117 needs ~4.7 V on VIN and will brown out.
-- Put the **bulk cap right at the amp's Vin**. Class-D bass transients pulling
-  through a boost converter are the classic cause of random ESP32 resets.
-- The firmware warns below 3.4 V and shuts down into deep sleep at 3.05 V to protect
-  the cell. Set `BATTERY_MONITOR 0` in `main/config.h` if you skip the divider —
-  otherwise a floating ADC pin may read as a flat battery.
+Four things matter here:
+
+- **Use a buck-boost, not an LDO.** A cell runs 4.2 V down to 3.0 V, so a linear
+  regulator drops out well before the cell is empty and the volume sags with it. A
+  buck-boost holds 3.3 V from 4.2 V all the way down to ~2.5 V, so the mask stays
+  equally loud until it stops.
+- **Feed the 3V3 pin, never 5V/VIN.** The devkit's AMS1117 needs ~4.7 V in and will
+  simply brown out on 3.3 V.
+- **Do not let USB and the regulator both drive 3V3.** Two regulators fighting over
+  the same rail is asking for trouble. Put a switch (or a Schottky from the
+  buck-boost to 3V3) in that path, and disconnect the battery rail while flashing.
+- **Bulk cap right at the amp's Vin**, 470–1000 µF plus a 0.1 µF, and star-wire both
+  loads from the regulator output. The amp and the ESP32 now share a rail, so
+  class-D bass transients land directly on the MCU supply — this cap is what keeps
+  it from resetting.
+
+At 3.3 V the MAX98357A makes roughly 1.2 W into 4 Ω rather than its 3.2 W at 5 V.
+That is still plenty inside a mask, and 4 Ω (not 8 Ω) plus 15 dB gain gets most of
+it back.
+
+The firmware warns below 3.4 V and, after five consecutive low reads, shuts down
+into deep sleep to protect the cell; the button wakes it again. Readings outside
+2.5–4.5 V are treated as "no battery sense" and ignored. Set `BATTERY_MONITOR 0` in
+`main/config.h` to compile the whole thing out.
 
 ---
 
@@ -118,6 +139,7 @@ c 3500    tone lowpass, Hz              g 8      input gain
 o 0.9     output gain                   t 0.006  gate threshold
 s         stats (CPU load, levels)      l        live level meter
 x         swap mic I2S slot             m        mute
+b         read the battery sense pin (raw ADC + pin mV)
 ```
 
 ---
@@ -184,8 +206,9 @@ below full scale. All pass. The firmware also reports its own CPU load — press
 | Distorted even on preset 4 | Input gain too high: `g 3` |
 | Howling feedback | Move the speaker off-axis from the mic, raise the gate (`t 0.01`), lower `o` |
 | Voice sounds warbly/robotic | Input too quiet for the WSOLA search to lock — raise `g` |
-| Random reboots on loud bass | Bulk cap missing at the amp, or the boost converter is sagging |
-| Quiet and getting quieter | Cell is draining; check `s` for the battery reading |
+| Random reboots on loud bass | Bulk cap missing at the amp — it now shares the 3.3 V rail with the ESP32 |
+| Quiet and getting quieter | Cell draining through an LDO instead of a buck-boost; press `b` |
+| `battery N mV - shutting down` | Sense divider not fitted or mis-wired. Press `b` for the raw count; readings outside 2.5–4.5 V are ignored now, and five consecutive low reads are needed to shut down |
 
 ## Safety
 

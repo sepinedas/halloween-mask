@@ -31,7 +31,23 @@
 #define MIC_SLOT_DEFAULT  0
 
 // -------------------------------------------------------------- battery ----
+#ifndef BATTERY_MONITOR                 // -DBATTERY_MONITOR=0 also works
 #define BATTERY_MONITOR   1             // 0 if you did not fit the divider
+#endif
 #define VBAT_DIVIDER      2.0f          // 100k/100k
 #define VBAT_WARN_MV      3400          // start warning (LED fast blink)
 #define VBAT_CUTOFF_MV    3050          // mute + deep sleep, protects the cell
+
+// A reading outside this window is not a 1S Li-ion, it is an unfitted or
+// mis-wired divider: GPIO34 is input-only with no internal pull, so floating
+// it reads a few hundred mV of noise. Anything below the minimum also cannot
+// be a running system - a cell that low is already latched off by its own
+// protection board and the 3V3 regulator would have dropped out. So readings
+// out here mean "no battery sense", never "flat battery", and must not
+// trigger the shutdown.
+#define VBAT_PLAUSIBLE_MIN_MV 2500
+#define VBAT_PLAUSIBLE_MAX_MV 4500
+
+// Consecutive plausible sub-cutoff reads (2 s apart) before shutting down, so
+// a bass transient sagging the rail cannot kill a working mask mid-sentence.
+#define VBAT_CUTOFF_STRIKES 5

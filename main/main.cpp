@@ -17,6 +17,7 @@
 
 #include "driver/gpio.h"
 #include "driver/i2s_std.h"
+#include "driver/rtc_io.h"
 #include "driver/uart.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -295,19 +296,43 @@ static void batteryInit() {
 #endif
 }
 
+static volatile int s_vbatRaw = 0;      // last raw ADC count, for debugging
+static volatile int s_vbatPinMv = 0;    // last voltage at the pin itself
+
 static int batteryMv() {
-    int acc = 0;
+    int accRaw = 0, accMv = 0;
     for (int i = 0; i < 8; ++i) {
         int raw = 0;
         if (adc_oneshot_read(s_adc, ADC_CHANNEL_6, &raw) != ESP_OK) return 0;
+        accRaw += raw;
         int mv = 0;
         if (s_cali && adc_cali_raw_to_voltage(s_cali, raw, &mv) == ESP_OK) {
-            acc += mv;
+            accMv += mv;
         } else {
-            acc += raw * 2450 / 4095;   // rough fallback for 12 dB attenuation
+            accMv += raw * 2450 / 4095;   // rough fallback for 12 dB attenuation
         }
     }
-    return static_cast<int>((acc / 8) * VBAT_DIVIDER);
+    s_vbatRaw = accRaw / 8;
+    s_vbatPinMv = accMv / 8;
+    return static_cast<int>(s_vbatPinMv * VBAT_DIVIDER);
+}
+
+static bool vbatPlausible(int mv) {
+    return mv >= VBAT_PLAUSIBLE_MIN_MV && mv <= VBAT_PLAUSIBLE_MAX_MV;
+}
+
+static void shutdownForLowBattery(int mv) {
+    ESP_LOGE(TAG, "battery %d mV on %d consecutive reads - shutting down to protect the cell",
+             mv, VBAT_CUTOFF_STRIKES);
+    gpio_set_level(PIN_AMP_SD, 0);
+    gpio_set_level(PIN_LED, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    // Leave a way back in without a power cycle: the button wakes it, and it
+    // re-measures on boot. If the cell really is flat it will shut down again.
+    rtc_gpio_pullup_en(PIN_BUTTON);
+    rtc_gpio_pulldown_dis(PIN_BUTTON);
+    esp_sleep_enable_ext0_wakeup(PIN_BUTTON, 0);
+    esp_deep_sleep_start();
 }
 #endif  // BATTERY_MONITOR
 
@@ -324,6 +349,7 @@ static void printHelp() {
     printf("  r <0-1>  ring mod mix         v <0-1> reverb mix\n");
     printf("  c <hz>   tone lowpass         g <x>   input gain\n");
     printf("  o <0-1>  output gain          t <x>   gate threshold\n");
+    printf("  b        read the battery sense pin\n");
     for (int i = 0; i < kPresetCount; ++i) {
         printf("  [%d] %s\n", i, kPresets[i].name);
     }
@@ -340,7 +366,8 @@ static void printStats() {
     printf("  ring %.0f Hz x%.2f  reverb %.2f  lp %.0f Hz  in x%.1f  out %.2f  gate %.4f\n",
            p.ringHz, p.ringMix, p.reverbMix, p.lpHz, p.inGain, p.outGain, p.gateThr);
 #if BATTERY_MONITOR
-    printf("  battery %d mV\n", s_vbatMv);
+    printf("  battery %d mV (pin %d mV, raw %d)%s\n", s_vbatMv, s_vbatPinMv, s_vbatRaw,
+           vbatPlausible(s_vbatMv) ? "" : "  <- no battery sense, ignored");
 #endif
     printf("  free heap %u B\n", (unsigned)esp_get_free_heap_size());
 }
@@ -371,6 +398,15 @@ static void handleLine(char* line) {
             return;
         case 'l':
             s_meter = !s_meter;
+            return;
+        case 'b':
+#if BATTERY_MONITOR
+            s_vbatMv = batteryMv();
+            printf("battery %d mV (pin %d mV, raw %d) plausible=%s\n", s_vbatMv, s_vbatPinMv,
+                   s_vbatRaw, vbatPlausible(s_vbatMv) ? "yes" : "no");
+#else
+            printf("battery monitor disabled at build time\n");
+#endif
             return;
         case 'm':
             editParams([](Params& p) { p.muted = !p.muted; });
@@ -451,9 +487,13 @@ static void uiTask(void*) {
     bool lastBtn = true;
     int64_t pressedAt = 0;
     bool longFired = false;
-    int64_t lastBattery = 0;
     int ledPhase = 0;
     bool lowBattery = false;
+#if BATTERY_MONITOR
+    int64_t lastBattery = 0;
+    int strikes = 0;
+    bool senseOk = true;
+#endif
 
     while (true) {
         pollConsole();
@@ -478,14 +518,35 @@ static void uiTask(void*) {
 #if BATTERY_MONITOR
         if (now - lastBattery > 2000000) {
             lastBattery = now;
-            s_vbatMv = batteryMv();
-            lowBattery = s_vbatMv > 500 && s_vbatMv < VBAT_WARN_MV;
-            if (s_vbatMv > 500 && s_vbatMv < VBAT_CUTOFF_MV) {
-                ESP_LOGE(TAG, "battery %d mV - shutting down", s_vbatMv);
-                gpio_set_level(PIN_AMP_SD, 0);
-                gpio_set_level(PIN_LED, 0);
-                vTaskDelay(pdMS_TO_TICKS(100));
-                esp_deep_sleep_start();
+            const int mv = batteryMv();
+            s_vbatMv = mv;
+
+            if (!vbatPlausible(mv)) {
+                // No usable battery sense. Keep running: an unfitted divider
+                // must never be able to shut the mask down.
+                if (senseOk) {
+                    ESP_LOGW(TAG,
+                             "battery sense reads %d mV (pin %d mV, raw %d), outside %d-%d mV: "
+                             "ignoring it. Divider not fitted? Set BATTERY_MONITOR 0 to silence.",
+                             mv, s_vbatPinMv, s_vbatRaw, VBAT_PLAUSIBLE_MIN_MV,
+                             VBAT_PLAUSIBLE_MAX_MV);
+                    senseOk = false;
+                }
+                lowBattery = false;
+                strikes = 0;
+            } else {
+                if (!senseOk) {
+                    ESP_LOGI(TAG, "battery sense back in range: %d mV", mv);
+                    senseOk = true;
+                }
+                lowBattery = mv < VBAT_WARN_MV;
+                if (mv < VBAT_CUTOFF_MV) {
+                    if (++strikes >= VBAT_CUTOFF_STRIKES) shutdownForLowBattery(mv);
+                    ESP_LOGW(TAG, "battery %d mV, strike %d/%d", mv, strikes,
+                             VBAT_CUTOFF_STRIKES);
+                } else {
+                    strikes = 0;
+                }
             }
         }
 #endif
@@ -528,6 +589,15 @@ extern "C" void app_main(void) {
     consoleInit();
 #if BATTERY_MONITOR
     batteryInit();
+    // Battery monitoring is advisory. On USB power, or with no sense divider
+    // fitted, the reading is meaningless and is ignored - the mask still runs.
+    s_vbatMv = batteryMv();
+    if (vbatPlausible(s_vbatMv)) {
+        ESP_LOGI(TAG, "battery %d mV", s_vbatMv);
+    } else {
+        ESP_LOGI(TAG, "no battery sense (%d mV on the divider) - running on external power",
+                 s_vbatMv);
+    }
 #endif
 
     dsp::RingMod::buildTable();
