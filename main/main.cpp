@@ -89,6 +89,9 @@ static dsp::SteepLowpass s_aa;  // input anti-alias, only when pitching up
 static bool s_useAA = false;
 static dsp::Biquad s_body;      // formant-ish body lift, see the Woman preset
 static bool s_useBody = false;
+
+// Pre-limiter push. See LOUDNESS_DB: this buys average level, not peak level.
+static const float kLoudness = powf(10.0f, LOUDNESS_DB / 20.0f);
 #if SPEAKER_HP_HZ > 0
 static dsp::Biquad s_outHp;     // keeps sub-bass out of the limiter
 #endif
@@ -286,7 +289,7 @@ static void processBlock(const int32_t* in, int32_t* out, int frames) {
         // gain reduction. Mostly it just keeps the cone still and saves power.
         y = s_outHp.process(y);
 #endif
-        y = s_limiter.process(y * p.outGain);
+        y = s_limiter.process(y * p.outGain * kLoudness);
 
         if (p.muted) y = 0.0f;
 
@@ -705,6 +708,7 @@ extern "C" void app_main(void) {
     s_gate.init(SAMPLE_RATE);
     s_reverb.init(SAMPLE_RATE);
     s_limiter.init(SAMPLE_RATE);
+    s_limiter.setCeiling(LIMITER_CEILING);
     s_ps1.reset();
     s_ps2.reset();
 

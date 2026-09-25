@@ -20,7 +20,7 @@ Built with **ESP-IDF 5.x** (tested against the 5.2/5.3 API surface).
 | Speaker | 4 Ω, 3 W, 40 mm is a good size for a mask |
 | 18650 cell + holder | Optional — see power below. Use a **protected** cell |
 | TP4056 charger module | The version with DW01 protection |
-| Buck-boost module (TPS63020 / TPS63060) | Battery to a stiff 3.3 V |
+| Boost converter (MT3608 or similar) | Battery to 5 V, 1 A+ |
 | 2 × 100 kΩ | Battery sense divider (optional) |
 | Momentary push button | Preset / mute |
 | 470–1000 µF electrolytic | Bulk cap across the amp supply |
@@ -43,7 +43,8 @@ given below — **match the silkscreen on your board**, not the datasheet column
 | GPIO4 | | | button to GND (internal pull-up) |
 | GPIO2 | | | on-board LED |
 | GPIO34 | | | battery divider midpoint |
-| 3V3 | `3V` / VDD | Vin | everything runs on 3.3 V |
+| 3V3 | `3V` / VDD | | mic is 3.3 V only — never 5 V |
+| VIN (5V) | | Vin | devkit and amp share the 5 V rail |
 | GND | `GND`, and **`SEL`** / L/R | GND | see below |
 
 Three details that will cost you an evening if you miss them:
@@ -56,46 +57,59 @@ Three details that will cost you an evening if you miss them:
   left I2S slot, which is what `MIC_SLOT_DEFAULT` expects. If the meter shows the
   level on the right slot instead, press `x` on the console or flip that define.
 - The amp's **GAIN** pin sets the analog gain: floating = 9 dB, to GND = 12 dB,
-  100 kΩ to GND = 15 dB. On a 3.3 V rail, start at **15 dB** (100 kΩ to GND).
+  100 kΩ to GND = 15 dB. On a 5 V rail start **floating (9 dB)** — there is more
+  power available now, and the extra analog gain mostly buys you feedback.
 
-### Power — 3.3 V only, battery optional
+### Power — 5 V rail, battery optional
 
-**USB alone is enough.** Plug the devkit in and it runs: no cell, no divider, no
-regulator. Battery monitoring is advisory, and an absent or unfitted sense divider
-is detected and ignored rather than treated as a flat cell.
+**USB alone is enough.** Plug the devkit in and it runs: no cell, no boost, no
+divider. Battery monitoring is advisory, and an absent or unfitted sense divider is
+detected and ignored rather than treated as a flat cell.
 
-For a battery, everything runs from one 3.3 V rail:
+For a battery, a boost converter makes 5 V for the devkit and the amp, and the
+devkit's own regulator makes the 3.3 V the microphone needs:
 
 ```
-18650 ──► TP4056 (+protection) ──┬──► buck-boost 3.3 V ──┬──► ESP32 3V3 pin
-           (charge via USB)      │   (TPS63020 etc.)     └──► MAX98357A Vin
-                                 │                            + 470-1000 µF
-                                 └──► 100k ──┬── GPIO34             here
-                                             │
+18650 ──► TP4056 (+protection) ──┬──► boost to 5 V ──┬──► ESP32 VIN (5V pin)
+           (charge via USB)      │   (MT3608 etc.)   └──► MAX98357A Vin
+                                 │                        + 470-1000 µF here
+                                 └──► 100k ──┬── GPIO34
+                                             │           ESP32 3V3 out ──► mic 3V
                                             100k
                                              │
                                             GND
 ```
 
-Four things matter here:
+Five things matter here:
 
-- **Use a buck-boost, not an LDO.** A cell runs 4.2 V down to 3.0 V, so a linear
-  regulator drops out well before the cell is empty and the volume sags with it. A
-  buck-boost holds 3.3 V from 4.2 V all the way down to ~2.5 V, so the mask stays
-  equally loud until it stops.
-- **Feed the 3V3 pin, never 5V/VIN.** The devkit's AMS1117 needs ~4.7 V in and will
-  simply brown out on 3.3 V.
-- **Do not let USB and the regulator both drive 3V3.** Two regulators fighting over
-  the same rail is asking for trouble. Put a switch (or a Schottky from the
-  buck-boost to 3V3) in that path, and disconnect the battery rail while flashing.
-- **Bulk cap right at the amp's Vin**, 470–1000 µF plus a 0.1 µF, and star-wire both
-  loads from the regulator output. The amp and the ESP32 now share a rail, so
-  class-D bass transients land directly on the MCU supply — this cap is what keeps
-  it from resetting.
+- **The microphone is a 3.3 V part — never put it on the 5 V rail.** The ICS-43434
+  is rated to 3.63 V absolute maximum and 5 V will destroy it. It runs from the
+  devkit's **3V3 output** pin. The amp is the only thing besides the devkit that
+  sees 5 V.
+- **3.3 V logic into a 5 V-powered amp is fine.** The MAX98357A's digital inputs are
+  not referenced to its supply, so I2S driven at 3.3 V works with Vin at 5 V — this
+  is the configuration the breakouts are designed around. `SD_MODE` at 3.3 V is
+  still comfortably above the 1.4 V threshold that selects the left channel, and the
+  firmware duplicates the signal into both slots anyway.
+- **Do not power VIN and USB at the same time.** Some devkits join USB 5 V to VIN
+  through a Schottky, some join them outright and will back-feed your PC's USB port.
+  Fit a switch in the boost output, and flip it off while flashing.
+- **Bulk cap right at the amp's Vin**, 470–1000 µF plus a 0.1 µF. Boost converters
+  sag under class-D bass transients, and that sag is what resets the ESP32.
+- **Size the boost for the peaks.** 3.2 W into 4 Ω is ~800 mA at 5 V, which at 3.7 V
+  in is over 1.1 A through the converter before losses. An MT3608-class module
+  manages that in bursts; something rated for a continuous 1 A+ is a safer choice.
 
-At 3.3 V the MAX98357A makes roughly 1.2 W into 4 Ω rather than its 3.2 W at 5 V.
-That is still plenty inside a mask, and 4 Ω (not 8 Ω) plus 15 dB gain gets most of
-it back.
+Putting the amp on its own 5 V rail rather than sharing 3.3 V with the ESP32 also
+keeps class-D switching noise off the MCU supply, which is a nice side effect.
+
+**Keep the battery divider on the cell**, upstream of the boost — it is there to
+protect the cell, and the firmware's 2.5–4.5 V thresholds assume raw cell voltage.
+Wired to the 5 V rail instead it reads ~5000 mV, lands outside the plausible window
+and gets ignored, so you simply lose the protection.
+
+At 5 V into 4 Ω the MAX98357A makes its rated ~3.2 W, about 4 dB more than the
+same amp on 3.3 V.
 
 The firmware warns below 3.4 V and, after five consecutive low reads, shuts down
 into deep sleep to protect the cell; the button wakes it again. Readings outside
@@ -154,18 +168,23 @@ B 4       body lift at 600 Hz, dB
 
 ### Getting it loud
 
-At 3.3 V into 4 Ω the amp has about 1.2 W to give, so it is worth not wasting any
-of it. In rough order of how much each one buys you:
+At 5 V into 4 Ω the amp has about 3.2 W to give. In rough order of how much each
+lever buys you:
 
 | Lever | Gain | Notes |
 | --- | --- | --- |
 | **Seal the speaker into a baffle** | up to +6 dB | The biggest and cheapest win. An unbaffled small speaker cancels itself front-to-back and loses most of its midrange. Cut a snug hole, no gaps around the rim |
-| **`GAIN` pin → 100 kΩ to GND** | +6 dB | 15 dB instead of the 9 dB you get leaving it floating |
+| **`GAIN` pin → 100 kΩ to GND** | +6 dB | 15 dB instead of the 9 dB it defaults to. On 5 V you may not need it, and it costs headroom before feedback |
 | **4 Ω speaker, not 8 Ω** | +3 dB | Twice the power for the same voltage |
 | **Console `g`** | varies | Input gain. Raise until `out` on the meter peaks near 0.8 |
-| **Console `o`** | up to +1.5 dB | Output gain, presets ship at 0.8–0.9, maximum 1.0 |
+| **`LOUDNESS_DB` in config.h** | +0.8 to +6 dB | Already set to 6. Raising it further does nothing — measured, +12 dB is identical to +6, because the limiter absorbs it |
 | **Console `d`** | varies | More drive is now louder as well as dirtier |
-| **5 V rail** | +4 dB | 3.2 W instead of 1.2 W — but that is the 3.3 V-only design decision, reversed |
+| **Console `o`** | — | Output gain; presets now ship at 1.0, so there is nothing left here |
+
+The firmware side is essentially exhausted. Peaks sit at 0.80–0.87 against a 0.95
+limiter ceiling, and the presets now land within about 1 dB of each other rather
+than varying by 6 dB, so switching voices no longer changes the volume. What is
+left is all acoustic and analog.
 
 Two cautions. Raising `g` also raises the noise floor and makes feedback more
 likely, and because the gate sits *after* the input gain you should raise `t` in
@@ -211,7 +230,7 @@ your voice, putting a male speaker near 55 Hz, and a 40 mm speaker will not
 reproduce that. The heavy drive on the deep presets is doing real work: it
 generates harmonics the speaker *can* render, and the ear reconstructs the
 missing fundamental from them. The output is then highpassed at `SPEAKER_HP_HZ`
-(120 Hz) so the amp does not waste its ~1.2 W moving the cone at frequencies
+(120 Hz) so the amp does not waste its ~3.2 W moving the cone at frequencies
 nobody will hear — measured on a 17-semitone shift at 15 dB removed below 90 Hz
 for 0.4 dB lost above 250 Hz.
 
@@ -282,7 +301,7 @@ before any gain. A live mic dithers by a few counts even in a silent room.
 
 1. **Press `T`** for the test tone. It bypasses the microphone and the whole DSP
    chain, so it splits the board in half.
-   - *Silent* → the fault is the amp, its supply or the speaker. Check 3.3 V at the
+   - *Silent* → the fault is the amp, its supply or the speaker. Check 5 V at the
      amp's Vin, GPIO21 high (~3.3 V) after boot, and the speaker: the MAX98357A
      output is **bridge-tied**, so the speaker floats across `+` and `−`. Grounding
      either terminal gives silence.
@@ -308,8 +327,8 @@ before any gain. A live mic dithers by a few counts even in a silent room.
 | Distorted even on preset 4 | Input gain too high: `g 3` |
 | Howling feedback | Move the speaker off-axis from the mic, raise the gate (`t 0.01`), lower `o` |
 | Voice sounds warbly/robotic | Input too quiet for the WSOLA search to lock — raise `g` |
-| Random reboots on loud bass | Bulk cap missing at the amp — it now shares the 3.3 V rail with the ESP32 |
-| Quiet and getting quieter | Cell draining through an LDO instead of a buck-boost; press `b` |
+| Random reboots on loud bass | Bulk cap missing at the amp, or the boost converter sagging under peaks |
+| Quiet and getting quieter | Cell draining, or the boost browning out under load; press `b` |
 | `battery N mV - shutting down` | Sense divider not fitted or mis-wired. Press `b` for the raw count; readings outside 2.5–4.5 V are ignored now, and five consecutive low reads are needed to shut down |
 
 ## Safety

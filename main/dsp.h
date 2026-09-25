@@ -223,17 +223,18 @@ private:
 class Limiter {
 public:
     void init(float fs);
+    void setCeiling(float c) { ceiling_ = clampf(c, 0.1f, 0.99f); }
     inline float process(float x) {
         const float a = fabsf(x);
         env_ = (a > env_) ? a + atk_ * (env_ - a) : a + rel_ * (env_ - a);
-        const float g = (env_ > kCeiling) ? kCeiling / env_ : 1.0f;
+        const float g = (env_ > ceiling_) ? ceiling_ / env_ : 1.0f;
         gain_ += (g - gain_) * (g < gain_ ? 0.4f : 0.0008f);
         return softClip(x * gain_);
     }
     void reset() { env_ = 0.0f; gain_ = 1.0f; }
 
 private:
-    static constexpr float kCeiling = 0.85f;
+    float ceiling_ = 0.85f;
     float env_ = 0.0f, gain_ = 1.0f, atk_ = 0.0f, rel_ = 0.0f;
 };
 

@@ -42,10 +42,30 @@
 // mask can be brought up on a monitor that only shows output. 0 disables.
 #define STARTUP_METER_SEC 20
 
+// ------------------------------------------------------------- loudness ----
+// Gain into the limiter, and the level the limiter holds the output to.
+//
+// Once peaks are already at the rail, "louder" means raising the average, and
+// the only way to do that is to push more signal into gain reduction. This is
+// that push. It does not raise peaks - the limiter normalises whatever it is
+// handed to LIMITER_CEILING - it raises RMS by flattening the crest factor.
+//
+// Measured, it is worth +0.8 dB on Demon (already limiting, so it gains only
+// what the ceiling gives) up to +6 dB on Clean, and it brings every preset to
+// roughly the same loudness, which is a pleasant side effect. Past about 6 dB
+// it does nothing whatsoever: the limiter absorbs all of it, and +12 dB
+// measures identically to +6.
+//
+// The cost is compression. Quiet passages come up with everything else, so the
+// noise floor rises and feedback inside a mask gets more likely. Back this off
+// first if it howls.
+#define LOUDNESS_DB     6.0f
+#define LIMITER_CEILING 0.95f
+
 // -------------------------------------------------------------- speaker ----
 // A 40 mm mask speaker makes nothing useful below roughly this, but a deeply
 // pitched preset happily sends it 40 Hz anyway: energy that only moves the
-// cone and eats into the amp's ~1.2 W. Highpassing the output discards it and
+// cone and eats into the amp's ~3.2 W. Highpassing the output discards it and
 // lets the harmonics carry the perceived pitch instead - the ear reconstructs
 // a missing fundamental quite happily. Measured on a 17-semitone-down voice
 // it removes ~15 dB below 90 Hz and costs 0.4 dB above 250 Hz.
